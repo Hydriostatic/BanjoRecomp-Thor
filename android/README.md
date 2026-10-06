@@ -6,14 +6,16 @@ An Android build of Banjo: Recompiled, made for the AYN Thor (Snapdragon, Vulkan
 
 ## Building with GitHub Actions
 
-The `android` workflow builds the APK on every push to `main`. It generates the game code from your ROM, which it reads from a separate **private** repository, so the ROM never ends up in this one.
+The APK is built in a **private** repository that holds your ROM, so the ROM never ends up in this public one.
 
-1. Create a private repository named `banjo-private-inputs` (or set the `BANJO_PRIVATE_INPUTS_REPO` Actions variable to another name).
+1. Create a private repository, e.g. `banjo-private-inputs`.
 2. Put the ROM at the top of it, as `.z64`, `.n64`, `.v64` or a `.zip` containing one.
-3. Create a fine-grained token that can read that repository's contents, and save it in this repository as the Actions secret `PRIVATE_INPUTS_TOKEN`.
-4. Run the workflow (Actions → android → Run workflow) and download the APK from the run's artifacts.
+3. Copy [`android/ci/private-build.yml`](ci/private-build.yml) into it as `.github/workflows/build.yml`.
+4. Each push to that repository (or Actions → build-apk → Run workflow) builds the APK from this repository's `main`. Download it from the run's artifacts.
 
-APKs are signed with the debug key in `android/debug.keystore` unless you add your own key as secrets: `BANJO_KEYSTORE_BASE64` (the keystore file, base64), `BANJO_KEYSTORE_PASSWORD`, `BANJO_KEY_ALIAS` and `BANJO_KEY_PASSWORD`. If you switch keys later, Android requires uninstalling the old APK first.
+This repository's own `android` workflow only compiles the port without a ROM, to catch build errors.
+
+APKs are signed with the debug key in `android/debug.keystore`, so every build can be installed over the previous one.
 
 ## Building on a Linux PC
 

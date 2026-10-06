@@ -1,0 +1,107 @@
+# Workflow for your PRIVATE repository that holds the ROM. Copy this file there as
+# .github/workflows/build.yml and put the Banjo-Kazooie (USA 1.0) ROM at the top of that
+# repository (.z64/.n64/.v64 or .zip). Each run checks out the public port and builds the APK
+# with your ROM; the APK is attached to the run as an artifact.
+#
+# No token is needed: the port repository is public, and the ROM is in the repository the
+# workflow runs in.
+
+name: build-apk
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit of the port to build
+        required: false
+        default: main
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      PORT_REPO: Hydriostatic/BanjoRecomp-Thor
+      NDK_VERSION: '28.2.13676358'
+    steps:
+      - name: Checkout the ROM
+        uses: actions/checkout@v4
+        with:
+          path: private-inputs
+
+      - name: Checkout the port
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PORT_REPO }}
+          ref: ${{ inputs.ref || 'main' }}
+          path: port
+          submodules: recursive
+
+      - name: Find the ROM
+        run: |
+          rom="$(find private-inputs -maxdepth 1 -type f \( -iname '*.z64' -o -iname '*.n64' -o -iname '*.v64' -o -iname '*.zip' \) | head -n 1)"
+          if [[ -z "$rom" ]]; then
+            echo "::error::Put the ROM (.z64/.n64/.v64/.zip) at the top of this repository."
+            exit 1
+          fi
+          echo "BANJO_ROM=$PWD/$rom" >> "$GITHUB_ENV"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang lld llvm unzip
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Install Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Cache dependencies and host tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            port/android/.work/deps/sdl2-android
+            port/android/.work/deps/freetype-android
+            port/android/.work/deps/SDL2-*
+            port/android/.work/host/N64Recomp
+            port/android/.work/host/RSPRecomp
+            port/android/.work/host/file_to_c
+            port/android/.work/host/bk_rom_decompress
+          key: thor-work-${{ env.NDK_VERSION }}-${{ hashFiles('port/android/build_android.sh', 'port/.gitmodules') }}
+
+      - name: Build
+        working-directory: port
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+          BANJO_VERSION_CODE: ${{ github.run_number }}
+          BANJO_VERSION_NAME: 0.1.${{ github.run_number }}
+        run: |
+          set -o pipefail
+          bash android/build_android.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Report errors
+        if: failure()
+        run: python3 port/android/ci/annotate_log.py "$RUNNER_TEMP/build.log"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BanjoThor-${{ github.run_number }}
+          path: port/android/out/*.apk
+          if-no-files-found: error
