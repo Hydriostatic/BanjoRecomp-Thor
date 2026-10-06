@@ -17,6 +17,7 @@
 #include "util/file.h"
 
 int banjo_main(int argc, char** argv);
+void banjo_install_crash_report(const char* path);
 
 extern "C" void plume_android_set_surface_ready(int ready);
 
@@ -54,6 +55,7 @@ namespace {
 
 extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char** argv) {
     redirect_output_to_logcat();
+    banjo_install_crash_report(std::getenv("BANJO_CRASH_REPORT"));
 
     // The activity unpacks the game's assets (UI files, fonts, controller database) into this
     // folder and points us at it. The game looks for them relative to the working directory.

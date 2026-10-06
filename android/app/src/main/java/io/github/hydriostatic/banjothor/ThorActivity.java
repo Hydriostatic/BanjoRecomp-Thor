@@ -55,8 +55,13 @@ public class ThorActivity extends SDLActivity {
         // Saves, settings and mods go to ~/.config/<program id> like on Linux, so HOME
         // is pointed at the app's private storage.
         setEnv("HOME", getFilesDir().getAbsolutePath());
+        // Where the native crash handler writes its report (see CrashLogs).
+        setEnv("BANJO_CRASH_REPORT", CrashLogs.reportFile(this).getAbsolutePath());
+        CrashLogs.installJavaHandler(this);
 
         super.onCreate(savedInstanceState);
+
+        CrashLogs.saveReportFromLastSession(this);
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         secondScreen = new SecondScreen(this);

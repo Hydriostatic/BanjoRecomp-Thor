@@ -173,7 +173,10 @@ set (SOURCES
 )
 
 if (ANDROID)
-    list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/src/android/android_bridge.cpp)
+    list(APPEND SOURCES
+        ${CMAKE_SOURCE_DIR}/src/android/android_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/android/crash_report.cpp
+    )
 endif()
 
 target_include_directories(BanjoRecompiled PRIVATE
