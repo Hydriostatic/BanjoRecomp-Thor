@@ -128,7 +128,8 @@ void banjo_install_crash_report(const char* path) {
     action.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigemptyset(&action.sa_mask);
 
-    for (int sig : { SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE }) {
+    const int signals[] = { SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE };
+    for (int sig : signals) {
         sigaction(sig, &action, &previous_actions[sig]);
     }
 }

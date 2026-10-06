@@ -202,6 +202,7 @@ if [[ "$CHECK_ONLY" == "1" ]]; then
     (cd "$CHECK_BUILD" && ninja -j "$JOBS" \
         CMakeFiles/BanjoRecompiled.dir/src/main/main.cpp.o \
         CMakeFiles/BanjoRecompiled.dir/src/android/android_bridge.cpp.o \
+        CMakeFiles/BanjoRecompiled.dir/src/android/crash_report.cpp.o \
         CMakeFiles/BanjoRecompiled.dir/src/game/config.cpp.o)
 
     gradle --no-daemon -p android :app:compileReleaseJavaWithJavac
