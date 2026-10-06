@@ -5,6 +5,10 @@
 # Needs:
 #   ANDROID_HOME      Android SDK, with NDK 28.2.13676358 and CMake 3.22.1 installed
 #   BANJO_ROM         your Banjo-Kazooie (USA 1.0) ROM, .z64/.n64/.v64 or a .zip holding one
+#
+# With BANJO_CHECK_ONLY=1 no ROM is needed: it compiles the libraries and the Android-specific
+# sources for Android and the Java code, without generating or linking the game. That's a quick
+# way to see whether the port still compiles.
 #   host tools        clang, ld.lld, cmake, ninja, make, cargo, python3, gradle, unzip
 #
 # Steps:
@@ -33,7 +37,10 @@ BK_ROM_COMPRESSOR_COMMIT="${BK_ROM_COMPRESSOR_COMMIT:-master}"
 ROM_SHA1="d6133ace5afaa0882cf214cf88daba39e266c078"
 
 : "${ANDROID_HOME:?Set ANDROID_HOME to your Android SDK}"
-: "${BANJO_ROM:?Set BANJO_ROM to your Banjo-Kazooie (USA 1.0) ROM}"
+CHECK_ONLY="${BANJO_CHECK_ONLY:-0}"
+if [[ "$CHECK_ONLY" != "1" ]]; then
+    : "${BANJO_ROM:?Set BANJO_ROM to your Banjo-Kazooie (USA 1.0) ROM}"
+fi
 ANDROID_NDK="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/$NDK_VERSION}"
 TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake"
 
@@ -72,7 +79,7 @@ if [[ ! -x "$HOST_DIR/N64Recomp" || ! -x "$HOST_DIR/RSPRecomp" ]]; then
     cp "$HOST_DIR/n64recomp-build/N64Recomp" "$HOST_DIR/n64recomp-build/RSPRecomp" "$HOST_DIR/"
 fi
 
-if [[ ! -x "$HOST_DIR/bk_rom_decompress" ]]; then
+if [[ "$CHECK_ONLY" != "1" && ! -x "$HOST_DIR/bk_rom_decompress" ]]; then
     rm -rf "$HOST_DIR/bk_rom_compressor"
     git clone --quiet https://github.com/MittenzHugg/bk_rom_compressor.git "$HOST_DIR/bk_rom_compressor"
     git -C "$HOST_DIR/bk_rom_compressor" checkout --quiet "$BK_ROM_COMPRESSOR_COMMIT"
@@ -81,6 +88,7 @@ if [[ ! -x "$HOST_DIR/bk_rom_decompress" ]]; then
 fi
 
 # ---------------------------------------------------------------------------------------------
+if [[ "$CHECK_ONLY" != "1" ]]; then
 step "Generating the game code from the ROM"
 
 ROM_INPUT="$BANJO_ROM"
@@ -116,6 +124,7 @@ make -C patches CC="${PATCHES_CC:-clang}" LD="${PATCHES_LD:-ld.lld}" -j "$JOBS"
 "$HOST_DIR/file_to_c" patches/patches.bin bk_patches_bin RecompiledPatches/patches_bin.c RecompiledPatches/patches_bin.h
 "$HOST_DIR/N64Recomp" banjo.us.rev0.toml
 "$HOST_DIR/RSPRecomp" n_aspMain.us.rev0.toml
+fi
 
 # ---------------------------------------------------------------------------------------------
 step "Building SDL2 and FreeType for Android"
@@ -152,13 +161,54 @@ if [[ ! -f "$FREETYPE_PREFIX/lib/libfreetype.a" ]]; then
     cmake --install "$DEPS_DIR/freetype-build"
 fi
 
-# ---------------------------------------------------------------------------------------------
-step "Building the APK"
-
 export BANJO_SDL2_PREFIX="$SDL2_PREFIX"
 export BANJO_SDL2_SOURCE="$SDL2_SOURCE"
 export BANJO_FREETYPE_PREFIX="$FREETYPE_PREFIX"
 export BANJO_HOST_FILE_TO_C="$HOST_DIR/file_to_c"
+
+# ---------------------------------------------------------------------------------------------
+if [[ "$CHECK_ONLY" == "1" ]]; then
+    step "Compile check (no ROM)"
+
+    # The generated sources don't exist without a ROM. Empty stand-ins let CMake configure;
+    # nothing that needs their contents gets built.
+    CHECK_STUBS=()
+    for stub in RecompiledPatches/patches.c RecompiledPatches/patches_bin.c rsp/n_aspMain.cpp; do
+        if [[ ! -e "$stub" ]]; then
+            mkdir -p "$(dirname "$stub")"
+            : > "$stub"
+            CHECK_STUBS+=("$stub")
+        fi
+    done
+    trap 'rm -f "${CHECK_STUBS[@]}"' EXIT
+
+    CHECK_BUILD="$WORK/check-build"
+    ndk_cmake -S "$ROOT" -B "$CHECK_BUILD" \
+        -DANDROID_STL=c++_static \
+        -DSDL2_DIR="$SDL2_PREFIX/lib/cmake/SDL2" \
+        -DCMAKE_PREFIX_PATH="$SDL2_PREFIX;$FREETYPE_PREFIX" \
+        -DCMAKE_FIND_ROOT_PATH="$SDL2_PREFIX;$FREETYPE_PREFIX" \
+        -DFREETYPE_LIBRARY="$FREETYPE_PREFIX/lib/libfreetype.a" \
+        -DFREETYPE_INCLUDE_DIRS="$FREETYPE_PREFIX/include/freetype2" \
+        -DFREETYPE_INCLUDE_DIR_ft2build="$FREETYPE_PREFIX/include/freetype2" \
+        -DFREETYPE_INCLUDE_DIR_freetype2="$FREETYPE_PREFIX/include/freetype2" \
+        -DRT64_HOST_FILE_TO_C="$HOST_DIR/file_to_c" \
+        -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF
+
+    # Everything except the game code itself and the final link.
+    cmake --build "$CHECK_BUILD" -j "$JOBS" --target rt64 librecomp ultramodern recompui recompinput
+    (cd "$CHECK_BUILD" && ninja -j "$JOBS" \
+        CMakeFiles/BanjoRecompiled.dir/src/main/main.cpp.o \
+        CMakeFiles/BanjoRecompiled.dir/src/android/android_bridge.cpp.o \
+        CMakeFiles/BanjoRecompiled.dir/src/game/config.cpp.o)
+
+    gradle --no-daemon -p android :app:compileReleaseJavaWithJavac
+    echo "Compile check passed."
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------------------------
+step "Building the APK"
 
 GRADLE_TASK="${GRADLE_TASK:-assembleRelease}"
 gradle --no-daemon -p android ":app:$GRADLE_TASK"
