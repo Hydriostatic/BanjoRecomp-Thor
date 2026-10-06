@@ -82,8 +82,9 @@ fi
 
 if [[ "$CHECK_ONLY" != "1" && ! -x "$HOST_DIR/bk_rom_decompress" ]]; then
     rm -rf "$HOST_DIR/bk_rom_compressor"
-    git clone --quiet https://github.com/MittenzHugg/bk_rom_compressor.git "$HOST_DIR/bk_rom_compressor"
+    git clone --quiet --recurse-submodules https://github.com/MittenzHugg/bk_rom_compressor.git "$HOST_DIR/bk_rom_compressor"
     git -C "$HOST_DIR/bk_rom_compressor" checkout --quiet "$BK_ROM_COMPRESSOR_COMMIT"
+    git -C "$HOST_DIR/bk_rom_compressor" submodule update --init --recursive --quiet
     (cd "$HOST_DIR/bk_rom_compressor" && cargo build --release --bin bk_rom_decompress)
     cp "$HOST_DIR/bk_rom_compressor/target/release/bk_rom_decompress" "$HOST_DIR/"
 fi
