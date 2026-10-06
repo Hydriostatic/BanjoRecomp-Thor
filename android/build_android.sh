@@ -218,3 +218,20 @@ gradle --no-daemon -p android ":app:$GRADLE_TASK"
 mkdir -p android/out
 find android/app/build/outputs/apk -name '*.apk' -exec cp {} android/out/ \;
 ls -la android/out
+
+# ---------------------------------------------------------------------------------------------
+step "Checking the APK"
+
+APK="$(ls android/out/*.apk | head -n 1)"
+CONTENTS="$(unzip -l "$APK")"
+for required in lib/arm64-v8a/libmain.so lib/arm64-v8a/libSDL2.so assets/program/recompcontrollerdb.txt assets/program/assets/recomp.rcss classes.dex; do
+    if ! grep -q " $required\$" <<< "$CONTENTS"; then
+        echo "The APK is missing $required" >&2
+        exit 1
+    fi
+done
+SUMMARY="$(basename "$APK"): $(du -h "$APK" | cut -f1); $(grep -E 'lib/arm64-v8a/.*\.so$' <<< "$CONTENTS" | awk '{printf "%s %.1f MB; ", $4, $1/1048576}')$(grep -c 'assets/program/' <<< "$CONTENTS") program files"
+echo "$SUMMARY"
+if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::notice title=APK::$SUMMARY"
+fi
