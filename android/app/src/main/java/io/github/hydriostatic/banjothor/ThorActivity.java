@@ -258,9 +258,17 @@ public class ThorActivity extends SDLActivity {
         }
 
         @Override
+        public void surfaceCreated(SurfaceHolder holder) {
+            // A new window isn't usable until SDL has seen its size in surfaceChanged().
+            setSurfaceReady(false);
+            super.surfaceCreated(holder);
+        }
+
+        @Override
         public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
             super.surfaceChanged(holder, format, width, height);
-            setSurfaceReady(true);
+            // SDL skips surfaces it can't use yet (e.g. the wrong orientation while rotating).
+            setSurfaceReady(mIsSurfaceReady);
         }
 
         @Override
