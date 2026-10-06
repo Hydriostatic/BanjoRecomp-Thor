@@ -63,7 +63,8 @@ android {
                         "-DFREETYPE_INCLUDE_DIR_freetype2=${freetypePrefix}/include/freetype2",
                         "-DRT64_HOST_FILE_TO_C=${hostFileToC}",
                         '-DZSTD_BUILD_PROGRAMS=OFF',
-                        '-DZSTD_BUILD_TESTS=OFF'
+                        '-DZSTD_BUILD_TESTS=OFF',
+                        '-DZSTD_BUILD_DICTBUILDER=OFF'
             }
         }
     }

@@ -195,7 +195,7 @@ if [[ "$CHECK_ONLY" == "1" ]]; then
         -DFREETYPE_INCLUDE_DIR_ft2build="$FREETYPE_PREFIX/include/freetype2" \
         -DFREETYPE_INCLUDE_DIR_freetype2="$FREETYPE_PREFIX/include/freetype2" \
         -DRT64_HOST_FILE_TO_C="$HOST_DIR/file_to_c" \
-        -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF
+        -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_BUILD_DICTBUILDER=OFF
 
     # Everything except the game code itself and the final link.
     cmake --build "$CHECK_BUILD" -j "$JOBS" --target rt64 librecomp ultramodern recompui recompinput

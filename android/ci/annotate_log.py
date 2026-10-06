@@ -20,13 +20,19 @@ def emit(title: str, text: str) -> None:
 def main() -> None:
     lines = open(sys.argv[1], errors='replace').read().splitlines()
 
-    errors = [i for i, line in enumerate(lines) if re.search(r'\berror\b|FAILED:|fatal:', line, re.IGNORECASE)]
+    errors = [i for i, line in enumerate(lines) if re.search(r'error:|FAILED:|fatal:|CMake Error', line)]
     shown = 0
-    for i in errors[:4]:
-        emit(f'Build error {shown + 1}', '\n'.join(lines[max(0, i - 15):i + 25]))
+    last_end = -1
+    for i in errors:
+        if i <= last_end or i >= len(lines) - 60:
+            continue  # already shown, or part of the log's end, which is shown below
+        emit(f'Build error {shown + 1}', '\n'.join(lines[max(0, i - 5):i + 30]))
+        last_end = i + 30
         shown += 1
+        if shown == 4:
+            break
 
-    emit('Build log (end)', '\n'.join(lines[-80:]))
+    emit('Build log (end)', '\n'.join(lines[-60:]))
 
 
 if __name__ == '__main__':
