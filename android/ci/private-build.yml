@@ -88,7 +88,6 @@ jobs:
       - name: Build
         working-directory: port
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
           BANJO_VERSION_CODE: ${{ github.run_number }}
           BANJO_VERSION_NAME: 0.1.${{ github.run_number }}
         run: |

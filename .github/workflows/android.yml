@@ -52,7 +52,6 @@ jobs:
 
       - name: Compile
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
           BANJO_CHECK_ONLY: '1'
         run: |
           set -o pipefail
