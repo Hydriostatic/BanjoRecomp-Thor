@@ -41,7 +41,8 @@ CHECK_ONLY="${BANJO_CHECK_ONLY:-0}"
 if [[ "$CHECK_ONLY" != "1" ]]; then
     : "${BANJO_ROM:?Set BANJO_ROM to your Banjo-Kazooie (USA 1.0) ROM}"
 fi
-ANDROID_NDK="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/$NDK_VERSION}"
+# Always the pinned NDK: GitHub's runners set ANDROID_NDK_HOME to whatever version they ship.
+ANDROID_NDK="${BANJO_NDK:-$ANDROID_HOME/ndk/$NDK_VERSION}"
 TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake"
 
 step() { echo; echo "==> $*"; }
@@ -173,7 +174,7 @@ if [[ "$CHECK_ONLY" == "1" ]]; then
     # The generated sources don't exist without a ROM. Empty stand-ins let CMake configure;
     # nothing that needs their contents gets built.
     CHECK_STUBS=()
-    for stub in RecompiledPatches/patches.c RecompiledPatches/patches_bin.c rsp/n_aspMain.cpp; do
+    for stub in RecompiledFuncs/check_stub.c RecompiledPatches/patches.c RecompiledPatches/patches_bin.c rsp/n_aspMain.cpp; do
         if [[ ! -e "$stub" ]]; then
             mkdir -p "$(dirname "$stub")"
             : > "$stub"
