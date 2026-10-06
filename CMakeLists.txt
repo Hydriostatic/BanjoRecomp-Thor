@@ -108,6 +108,11 @@ target_sources(PatchesLib PRIVATE
 
 set_source_files_properties(${CMAKE_SOURCE_DIR}/RecompiledPatches/patches.c PROPERTIES COMPILE_FLAGS -fno-strict-aliasing)
 
+# The Android build runs on prepared sources: the patches and the recompiled code are generated
+# on the build machine beforehand (see android/build_android.sh). The custom commands below are
+# skipped there, both because they run host tools and because a Gradle clean would delete their
+# outputs.
+if (NOT ANDROID)
 # Build patches elf
 if(NOT DEFINED PATCHES_C_COMPILER)
     set(PATCHES_C_COMPILER clang)
@@ -140,9 +145,15 @@ add_custom_command(OUTPUT
                    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
                    DEPENDS ${CMAKE_SOURCE_DIR}/patches/patches.elf
 )
+endif()
 
-# Main executable
-add_executable(BanjoRecompiled)
+# Main executable. On Android the game is a shared library (libmain.so) that SDL's activity loads.
+if (ANDROID)
+    add_library(BanjoRecompiled SHARED)
+    set_target_properties(BanjoRecompiled PROPERTIES OUTPUT_NAME main)
+else()
+    add_executable(BanjoRecompiled)
+endif()
 
 set (SOURCES
     ${CMAKE_SOURCE_DIR}/src/main/launcher_animation.cpp
@@ -160,6 +171,10 @@ set (SOURCES
 
     ${CMAKE_SOURCE_DIR}/rsp/n_aspMain.cpp
 )
+
+if (ANDROID)
+    list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/src/android/android_bridge.cpp)
+endif()
 
 target_include_directories(BanjoRecompiled PRIVATE
     ${CMAKE_SOURCE_DIR}/include
@@ -294,6 +309,18 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     target_link_libraries(BanjoRecompiled PRIVATE "-latomic -static-libstdc++" ${CMAKE_DL_LIBS} Threads::Threads)
 endif()
 
+if (ANDROID)
+    # SDL2 and FreeType are built for Android ahead of time and passed in by the Gradle build.
+    find_package(SDL2 REQUIRED)
+    find_package(Freetype REQUIRED)
+
+    add_compile_definitions("PLUME_SDL_VULKAN_ENABLED")
+    add_compile_definitions("RT64_SDL_WINDOW_VULKAN")
+
+    target_include_directories(BanjoRecompiled PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(BanjoRecompiled PRIVATE SDL2::SDL2 ${FREETYPE_LIBRARIES} android log ${CMAKE_DL_LIBS})
+endif()
+
 # TODO fix the rt64 CMake script so that this doesn't need to be duplicated here
 # For DXC
 set (DXC_COMMON_OPTS "-I${PROJECT_SOURCE_DIR}/src")
@@ -318,7 +345,8 @@ else()
             set(SPIRVCROSS "DYLD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/lib/rt64/src/contrib/spirv-cross/lib/arm64" "${PROJECT_SOURCE_DIR}/lib/rt64//src/contrib/spirv-cross/bin/x64/spirv-cross")
         endif()
     else()
-        if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
+        # DXC runs on the build machine, which isn't the target when cross-compiling for Android.
+        if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
             set (DXC "LD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/lib/rt64/src/contrib/dxc/lib/x64" "${PROJECT_SOURCE_DIR}/lib/rt64/src/contrib/dxc/bin/x64/dxc-linux")
         else()
             set (DXC "LD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/lib/rt64/src/contrib/dxc/lib/arm64" "${PROJECT_SOURCE_DIR}/lib/rt64/src/contrib/dxc/bin/arm64/dxc-linux")

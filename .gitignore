@@ -66,3 +66,12 @@ RSPRecomp
 
 # Controller mappings file
 gamecontrollerdb.txt
+
+# Android build
+android/.work/
+android/out/
+android/.gradle/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+banjo.us.v10.decompressed.z64

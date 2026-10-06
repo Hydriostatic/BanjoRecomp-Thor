@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Banjo Thor</string>
+    <string name="second_screen_title">Banjo-Kazooie</string>
+    <string name="second_screen_subtitle">Banjo: Recompiled for Android</string>
+</resources>

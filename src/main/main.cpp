@@ -181,7 +181,7 @@ ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::
     bool choose_kazooie_icon = (rand() % 2 == 0);
     HICON new_icon = LoadIcon(GetModuleHandle(NULL), choose_kazooie_icon ? MAKEINTRESOURCE(APP_ICON_K) : MAKEINTRESOURCE(APP_ICON_B));
     SendMessage(wmInfo.info.win.window, WM_SETICON, ICON_SMALL2, (LPARAM)(new_icon));
-#elif defined(__linux__)
+#elif defined(__linux__) && !defined(__ANDROID__)
     SetImageAsIcon("icons/app.png", window);
 #endif
 
@@ -270,7 +270,12 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
 
     // Prevent audio latency from building up by skipping samples in incoming audio when too many samples are already queued.
     // Skip samples based on how many microseconds of samples are queued already.
+#if defined(__ANDROID__)
+    // Android's audio output schedules less evenly, so allow a bigger backlog before dropping samples.
+    uint32_t skip_factor = cur_queued_microseconds / 500000;
+#else
     uint32_t skip_factor = cur_queued_microseconds / 100000;
+#endif
     if (skip_factor != 0) {
         uint32_t skip_ratio = 1 << skip_factor;
         num_bytes_to_queue /= skip_ratio;
@@ -286,7 +291,11 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
 }
 
 size_t get_frames_remaining() {
+#if defined(__ANDROID__)
+    constexpr float buffer_offset_frames = 2.0f;
+#else
     constexpr float buffer_offset_frames = 1.0f;
+#endif
     // Get the number of remaining buffered audio bytes.
     uint64_t buffered_byte_count = SDL_GetQueuedAudioSize(audio_device);
 
@@ -332,7 +341,11 @@ bool reset_audio(uint32_t output_freq) {
         .format = AUDIO_F32,
         .channels = (Uint8)output_channels,
         .silence = 0, // calculated
+#if defined(__ANDROID__)
+        .samples = 0x800, // Android's audio output underruns with the small desktop buffer.
+#else
         .samples = 0x100, // Fairly small sample count to reduce the latency of internal buffering
+#endif
         .padding = 0, // unused
         .size = 0, // calculated
         .callback = nullptr,
@@ -615,7 +628,12 @@ void on_launcher_init(recompui::LauncherMenu *menu) {
 
 #define REGISTER_FUNC(name) recomp::overlays::register_base_export(#name, name)
 
+#if defined(__ANDROID__)
+// On Android, SDL's activity starts the game through SDL_main in src/android/android_bridge.cpp.
+int banjo_main(int argc, char** argv) {
+#else
 int main(int argc, char** argv) {
+#endif
     (void)argc;
     (void)argv;
     recomp::Version project_version{};

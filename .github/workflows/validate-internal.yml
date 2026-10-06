@@ -7,6 +7,7 @@ on:
     types: [opened, synchronize]
 jobs:
   build:
-    if: github.event_name == 'push' || github.repository == github.event.pull_request.head.repo.full_name
+    # Desktop builds need upstream's private inputs, so they only run in the upstream repo.
+    if: github.repository == 'BanjoRecomp/BanjoRecomp' && (github.event_name == 'push' || github.repository == github.event.pull_request.head.repo.full_name)
     uses: ./.github/workflows/validate.yml
     secrets: inherit

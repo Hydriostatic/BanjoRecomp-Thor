@@ -1,0 +1,185 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0789c20..7c0f414 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -14,6 +14,10 @@ if(APPLE)
+ endif()
+ 
+ string(COMPARE EQUAL ${CMAKE_SYSTEM_NAME} "Linux" IS_LINUX)
++# Android goes through SDL for its Vulkan surface, just like the SDL path on Linux.
++if(CMAKE_SYSTEM_NAME STREQUAL "Android")
++    set(IS_LINUX TRUE)
++endif()
+ 
+ # Project options
+ include(CMakeDependentOption)
+diff --git a/plume_render_interface_types.h b/plume_render_interface_types.h
+index 9dcfedf..811a9dd 100644
+--- a/plume_render_interface_types.h
++++ b/plume_render_interface_types.h
+@@ -37,10 +37,11 @@ namespace plume {
+ #if defined(_WIN64)
+     // Native HWND handle to the target window.
+     typedef HWND RenderWindow;
+-#elif defined(__ANDROID__)
+-    typedef ANativeWindow* RenderWindow;
+ #elif defined(PLUME_SDL_VULKAN_ENABLED)
++    // Checked before Android so SDL owns the surface there too.
+     typedef SDL_Window *RenderWindow;
++#elif defined(__ANDROID__)
++    typedef ANativeWindow* RenderWindow;
+ #elif defined(__linux__)
+     struct RenderWindow {
+         Display* display;
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index f1dd503..fdc8933 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -27,6 +27,26 @@
+ // TODO:
+ // - Fix resource pools.
+ 
++#if defined(__ANDROID__)
++#include <atomic>
++
++namespace {
++    // Android destroys the native window whenever the app leaves the screen and gives
++    // a new one when it comes back. The app tells us about it through this state so
++    // the swap chain can stop presenting and rebuild its surface afterwards.
++    std::atomic<bool> androidSurfaceReady{ true };
++    std::atomic<uint32_t> androidSurfaceGeneration{ 0 };
++}
++
++extern "C" __attribute__((visibility("default"))) void plume_android_set_surface_ready(int ready) {
++    if (ready) {
++        androidSurfaceGeneration.fetch_add(1, std::memory_order_acq_rel);
++    }
++
++    androidSurfaceReady.store(ready != 0, std::memory_order_release);
++}
++#endif
++
+ namespace plume {
+     // Backend constants.
+ 
+@@ -2204,6 +2224,36 @@ namespace plume {
+             }
+         }
+ 
++#   if defined(__ANDROID__)
++        // Android's swap chains usually only offer RGBA. Fall back to it (or to whatever comes
++        // first) and report the format we actually got through the swap chain description.
++        if (compatibleSurfaceFormats.empty()) {
++            for (uint32_t i = 0; i < surfaceFormatCount; i++) {
++                if (surfaceFormats[i].format == VK_FORMAT_R8G8B8A8_UNORM) {
++                    compatibleSurfaceFormats.emplace_back(surfaceFormats[i]);
++                    break;
++                }
++            }
++
++            if (compatibleSurfaceFormats.empty() && (surfaceFormatCount > 0)) {
++                compatibleSurfaceFormats.emplace_back(surfaceFormats[0]);
++            }
++
++            if (!compatibleSurfaceFormats.empty()) {
++                if (compatibleSurfaceFormats[0].format == VK_FORMAT_R8G8B8A8_UNORM) {
++                    this->desc.format = RenderFormat::R8G8B8A8_UNORM;
++                }
++                else if (compatibleSurfaceFormats[0].format == VK_FORMAT_B8G8R8A8_UNORM) {
++                    this->desc.format = RenderFormat::B8G8R8A8_UNORM;
++                }
++
++                fprintf(stderr, "Requested surface format is unavailable, using VkFormat %d instead.\n", compatibleSurfaceFormats[0].format);
++            }
++        }
++
++        surfaceGeneration = androidSurfaceGeneration.load(std::memory_order_acquire);
++#   endif
++
+         if (compatibleSurfaceFormats.empty()) {
+             fprintf(stderr, "No compatible surface formats were found.\n");
+             return;
+@@ -2310,6 +2360,12 @@ namespace plume {
+     }
+ 
+     bool VulkanSwapChain::resize() {
++#   if defined(__ANDROID__)
++        if (!androidSurfaceReady.load(std::memory_order_acquire)) {
++            return false;
++        }
++#   endif
++
+         getWindowSize(width, height);
+ 
+         // Don't recreate the swap chain at all if the window doesn't have a valid size.
+@@ -2320,6 +2376,30 @@ namespace plume {
+         // Destroy any image view references to the current swap chain.
+         releaseImageViews();
+ 
++#   if defined(__ANDROID__) && defined(PLUME_SDL_VULKAN_ENABLED)
++        // The surface belongs to the native window it was made from. If Android gave us a new
++        // window since then, the old surface is dead and has to be replaced before the swap chain.
++        const uint32_t currentGeneration = androidSurfaceGeneration.load(std::memory_order_acquire);
++        if ((surface == VK_NULL_HANDLE) || (surfaceGeneration != currentGeneration)) {
++            VulkanInterface *renderInterface = commandQueue->device->renderInterface;
++            releaseSwapChain();
++            if (surface != VK_NULL_HANDLE) {
++                vkDestroySurfaceKHR(renderInterface->instance, surface, nullptr);
++                surface = VK_NULL_HANDLE;
++            }
++
++            if (SDL_Vulkan_CreateSurface(desc.renderWindow, renderInterface->instance, &surface) == SDL_FALSE) {
++                fprintf(stderr, "SDL_Vulkan_CreateSurface failed while recreating the Android surface: %s\n", SDL_GetError());
++                surface = VK_NULL_HANDLE;
++                return false;
++            }
++
++            VkBool32 presentSupported = VK_FALSE;
++            vkGetPhysicalDeviceSurfaceSupportKHR(commandQueue->device->physicalDevice, commandQueue->familyIndex, surface, &presentSupported);
++            surfaceGeneration = currentGeneration;
++        }
++#   endif
++
+         // Query surface capabilities to get the valid extent bounds.
+         VkSurfaceCapabilitiesKHR surfaceCapabilities = {};
+         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(commandQueue->device->physicalDevice, surface, &surfaceCapabilities);
+@@ -2401,6 +2481,12 @@ namespace plume {
+     }
+ 
+     bool VulkanSwapChain::needsResize() const {
++#   if defined(__ANDROID__)
++        if (!androidSurfaceReady.load(std::memory_order_acquire) || (surfaceGeneration != androidSurfaceGeneration.load(std::memory_order_acquire))) {
++            return true;
++        }
++#   endif
++
+         uint32_t windowWidth, windowHeight;
+         getWindowSize(windowWidth, windowHeight);
+         return (vk == VK_NULL_HANDLE) || (windowWidth != width) || (windowHeight != height) || (requiredPresentMode != createdPresentMode);
+@@ -2443,6 +2529,12 @@ namespace plume {
+     }
+ 
+     bool VulkanSwapChain::isEmpty() const {
++#   if defined(__ANDROID__)
++        if (!androidSurfaceReady.load(std::memory_order_acquire)) {
++            return true;
++        }
++#   endif
++
+         return (vk == VK_NULL_HANDLE) || (width == 0) || (height == 0);
+     }
+ 
+diff --git a/plume_vulkan.h b/plume_vulkan.h
+index 0a1edbe..521ab93 100644
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -226,6 +226,9 @@ namespace plume {
+         VkSwapchainKHR vk = VK_NULL_HANDLE;
+         VulkanCommandQueue *commandQueue = nullptr;
+         VkSurfaceKHR surface = VK_NULL_HANDLE;
++#   if defined(__ANDROID__)
++        uint32_t surfaceGeneration = 0;
++#   endif
+ #if defined(__APPLE__)
+         std::unique_ptr<CocoaWindow> windowWrapper;
+ #endif

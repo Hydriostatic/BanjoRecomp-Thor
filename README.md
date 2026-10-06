@@ -1,3 +1,16 @@
+# Banjo: Recompiled for Android (AYN Thor)
+
+**This is an unofficial Android port of [Banjo: Recompiled](https://github.com/BanjoRecomp/BanjoRecomp), aimed at the AYN Thor.** It isn't affiliated with or endorsed by the Banjo: Recompiled team. Please don't report problems with this port to them.
+
+Unlike the upstream project, **the Android-specific code here was written with the help of an AI assistant (Claude)**. Because of the upstream no-AI policy quoted below, none of it should be offered back to the upstream project.
+
+- How to build it, and how the port works: [android/README.md](android/README.md)
+- The Android port takes ideas from [AurelioB/BanjoRecomp-Android](https://github.com/AurelioB/BanjoRecomp-Android) (GPL-3.0), for example rebuilding the Vulkan surface when Android replaces the window, and turning off UI MSAA on Adreno.
+
+The original README follows.
+
+---
+
 # Banjo: Recompiled
 Banjo: Recompiled is a project that uses [N64: Recompiled](https://github.com/N64Recomp/N64Recomp) to **statically recompile** Banjo-Kazooie into a native port with many new features, enhancements, and extensive mod support. This project uses [RT64](https://github.com/rt64/rt64) as the rendering engine to provide graphical enhancements.
 

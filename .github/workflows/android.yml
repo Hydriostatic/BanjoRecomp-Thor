@@ -1,0 +1,109 @@
+name: android
+
+# Builds the Android APK. The game code is generated from your ROM, which lives in a separate
+# private repository so it's never part of this one:
+#
+#   vars.BANJO_PRIVATE_INPUTS_REPO   that repository (default: <owner>/banjo-private-inputs)
+#   secrets.PRIVATE_INPUTS_TOKEN     a token that can read it
+#
+# Put the Banjo-Kazooie (USA 1.0) ROM at the top of that repository, as .z64/.n64/.v64 or .zip.
+
+on:
+  push:
+    branches:
+      - main
+      - 'android/**'
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Build APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      NDK_VERSION: '28.2.13676358'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Get the ROM from the private repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.BANJO_PRIVATE_INPUTS_REPO || format('{0}/banjo-private-inputs', github.repository_owner) }}
+          token: ${{ secrets.PRIVATE_INPUTS_TOKEN }}
+          path: private-inputs
+
+      - name: Find the ROM
+        run: |
+          rom="$(find private-inputs -maxdepth 1 -type f \( -iname '*.z64' -o -iname '*.n64' -o -iname '*.v64' -o -iname '*.zip' \) | head -n 1)"
+          if [[ -z "$rom" ]]; then
+            echo "::error::No ROM (.z64/.n64/.v64/.zip) at the top of the private inputs repository."
+            exit 1
+          fi
+          echo "BANJO_ROM=$PWD/$rom" >> "$GITHUB_ENV"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang lld llvm unzip
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Install Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Cache Android dependencies and host tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            android/.work/deps/sdl2-android
+            android/.work/deps/freetype-android
+            android/.work/deps/SDL2-*
+            android/.work/host/N64Recomp
+            android/.work/host/RSPRecomp
+            android/.work/host/file_to_c
+            android/.work/host/bk_rom_decompress
+          key: android-work-${{ env.NDK_VERSION }}-${{ hashFiles('android/build_android.sh', '.gitmodules') }}-${{ hashFiles('lib/N64ModernRuntime/N64Recomp/**/*.cpp') }}
+
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+          BANJO_VERSION_CODE: ${{ github.run_number }}
+          BANJO_VERSION_NAME: 0.1.${{ github.run_number }}
+          BANJO_KEYSTORE_BASE64: ${{ secrets.BANJO_KEYSTORE_BASE64 }}
+          BANJO_KEYSTORE_PASSWORD: ${{ secrets.BANJO_KEYSTORE_PASSWORD }}
+          BANJO_KEY_ALIAS: ${{ secrets.BANJO_KEY_ALIAS }}
+          BANJO_KEY_PASSWORD: ${{ secrets.BANJO_KEY_PASSWORD }}
+        run: |
+          # Use your own signing key if one is set up; otherwise the repo's debug key signs the APK.
+          if [[ -n "$BANJO_KEYSTORE_BASE64" ]]; then
+            echo "$BANJO_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            export BANJO_KEYSTORE="$RUNNER_TEMP/release.keystore"
+          else
+            unset BANJO_KEYSTORE_PASSWORD BANJO_KEY_ALIAS BANJO_KEY_PASSWORD
+          fi
+          bash android/build_android.sh
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BanjoThor-${{ github.run_number }}
+          path: android/out/*.apk
+          if-no-files-found: error

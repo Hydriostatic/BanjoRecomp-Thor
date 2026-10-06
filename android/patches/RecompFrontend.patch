@@ -1,0 +1,183 @@
+diff --git a/recompinput/CMakeLists.txt b/recompinput/CMakeLists.txt
+index 899372b..0488ca1 100644
+--- a/recompinput/CMakeLists.txt
++++ b/recompinput/CMakeLists.txt
+@@ -42,7 +42,7 @@ target_include_directories(recompinput PRIVATE
+ 
+ if (WIN32)
+     target_include_directories(recompinput PRIVATE ${sdl2_SOURCE_DIR}/include)
+-elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux")
++elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux|Android")
+     target_include_directories(recompinput PRIVATE ${SDL2_INCLUDE_DIRS})
+ endif()
+ 
+diff --git a/recompui/CMakeLists.txt b/recompui/CMakeLists.txt
+index 4dce8e0..49a0703 100644
+--- a/recompui/CMakeLists.txt
++++ b/recompui/CMakeLists.txt
+@@ -106,7 +106,7 @@ target_include_directories(recompui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include
+ 
+ if (WIN32)
+     target_include_directories(recompui PRIVATE ${sdl2_SOURCE_DIR}/include)
+-elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux")
++elseif (APPLE OR CMAKE_SYSTEM_NAME MATCHES "Linux|Android")
+     target_include_directories(recompui PRIVATE ${SDL2_INCLUDE_DIRS})
+ endif()
+ 
+diff --git a/recompui/src/renderer/ui_renderer.cpp b/recompui/src/renderer/ui_renderer.cpp
+index 5ca5349..82f9e8d 100644
+--- a/recompui/src/renderer/ui_renderer.cpp
++++ b/recompui/src/renderer/ui_renderer.cpp
+@@ -109,7 +109,12 @@ class RmlRenderInterface_RT64_impl : public Rml::RenderInterfaceCompatibility {
+     static constexpr uint32_t initial_index_buffer_size = 1024 * sizeof(int);
+     static constexpr plume::RenderFormat RmlTextureFormat = plume::RenderFormat::R8G8B8A8_UNORM;
+     static constexpr plume::RenderFormat RmlTextureFormatBgra = plume::RenderFormat::B8G8R8A8_UNORM;
++#if defined(__ANDROID__)
++    // Matches the RGBA swap chain RT64 uses on Android.
++    static constexpr plume::RenderFormat SwapChainFormat = plume::RenderFormat::R8G8B8A8_UNORM;
++#else
+     static constexpr plume::RenderFormat SwapChainFormat = plume::RenderFormat::B8G8R8A8_UNORM;
++#endif
+     static constexpr uint32_t RmlTextureFormatBytesPerPixel = RenderFormatSize(RmlTextureFormat);
+     static_assert(RenderFormatSize(RmlTextureFormatBgra) == RmlTextureFormatBytesPerPixel);
+     plume::RenderInterface* interface_;
+@@ -161,11 +166,14 @@ public:
+         interface_ = interface;
+         device_ = device;
+ 
+-        // Enable 4X MSAA if supported by the device.
++        // Enable MSAA if supported by the device. Android stays single-sampled: resolving the
++        // multisampled UI target is a known source of black screens on Adreno drivers.
++#if !defined(__ANDROID__)
+         const plume::RenderSampleCounts desired_sample_count = plume::RenderSampleCount::COUNT_8;
+         if (device_->getSampleCountsSupported(SwapChainFormat) & desired_sample_count) {
+             multisampling_.sampleCount = desired_sample_count;
+         }
++#endif
+ 
+         vertex_buffer_.flags_ = plume::RenderBufferFlag::VERTEX;
+         index_buffer_.flags_ = plume::RenderBufferFlag::INDEX;
+diff --git a/recompui/src/util/file.cpp b/recompui/src/util/file.cpp
+index 7ee84ed..23255f7 100644
+--- a/recompui/src/util/file.cpp
++++ b/recompui/src/util/file.cpp
+@@ -10,6 +10,11 @@
+ #include <fstream>
+ #include <iomanip>
+ 
++#if defined(__ANDROID__)
++#include <jni.h>
++#include <mutex>
++#endif
++
+ #if defined(_WIN32)
+ #include <Shlobj.h>
+ #elif defined(__linux__)
+@@ -20,6 +25,66 @@
+ #endif
+ 
+ namespace recompui {
++#if defined(__ANDROID__)
++    // Android has no file dialogs, so the app's activity opens the system document picker
++    // and reports back through complete_android_document_picker().
++    namespace {
++        std::mutex android_picker_mutex;
++        std::function<void(bool, const std::list<std::filesystem::path>&)> android_picker_callback;
++
++        bool request_android_document_picker(bool multiple) {
++            JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
++            jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
++            if (env == nullptr || activity == nullptr) {
++                return false;
++            }
++
++            bool requested = false;
++            jclass activity_class = env->GetObjectClass(activity);
++            if (activity_class != nullptr) {
++                jmethodID method = env->GetMethodID(activity_class, "openDocumentPicker", "(Z)V");
++                if (method != nullptr) {
++                    env->CallVoidMethod(activity, method, multiple ? JNI_TRUE : JNI_FALSE);
++                    requested = !env->ExceptionCheck();
++                }
++
++                env->DeleteLocalRef(activity_class);
++            }
++
++            if (env->ExceptionCheck()) {
++                env->ExceptionClear();
++            }
++
++            env->DeleteLocalRef(activity);
++            return requested;
++        }
++
++        void open_android_document_picker(bool multiple, std::function<void(bool, const std::list<std::filesystem::path>&)> callback) {
++            {
++                std::lock_guard lock(android_picker_mutex);
++                android_picker_callback = std::move(callback);
++            }
++
++            if (!request_android_document_picker(multiple)) {
++                file::complete_android_document_picker(false, {});
++            }
++        }
++    }
++
++    void file::complete_android_document_picker(bool success, const std::list<std::filesystem::path>& paths) {
++        std::function<void(bool, const std::list<std::filesystem::path>&)> callback;
++        {
++            std::lock_guard lock(android_picker_mutex);
++            callback = std::move(android_picker_callback);
++            android_picker_callback = nullptr;
++        }
++
++        if (callback) {
++            callback(success && !paths.empty(), paths);
++        }
++    }
++#endif
++
+     static void perform_file_dialog_operation(const std::function<void(bool, const std::filesystem::path&)>& callback) {
+         nfdnchar_t* native_path = nullptr;
+         nfdresult_t result = NFD_OpenDialogN(&native_path, nullptr, 0, nullptr);
+@@ -129,7 +194,11 @@ namespace recompui {
+     }
+ 
+     void file::open_file_dialog(std::function<void(bool success, const std::filesystem::path& path)> callback) {
+-#ifdef __APPLE__
++#if defined(__ANDROID__)
++        open_android_document_picker(false, [callback](bool success, const std::list<std::filesystem::path>& paths) {
++            callback(success, success ? paths.front() : std::filesystem::path{});
++        });
++#elif defined(__APPLE__)
+         file::apple::dispatch_on_ui_thread([callback]() {
+             perform_file_dialog_operation(callback);
+         });
+@@ -139,7 +208,9 @@ namespace recompui {
+     }
+ 
+     void file::open_file_dialog_multiple(std::function<void(bool success, const std::list<std::filesystem::path>& paths)> callback) {
+-#ifdef __APPLE__
++#if defined(__ANDROID__)
++        open_android_document_picker(true, std::move(callback));
++#elif defined(__APPLE__)
+         file::apple::dispatch_on_ui_thread([callback]() {
+             perform_file_dialog_operation_multiple(callback);
+         });
+diff --git a/recompui/src/util/file.h b/recompui/src/util/file.h
+index 2f224aa..67d30dc 100644
+--- a/recompui/src/util/file.h
++++ b/recompui/src/util/file.h
+@@ -15,6 +15,12 @@ namespace recompui {
+         void open_file_dialog(std::function<void(bool success, const std::filesystem::path& path)> callback);
+         void open_file_dialog_multiple(std::function<void(bool success, const std::list<std::filesystem::path>& paths)> callback);
+         void show_error_message_box(const char *title, const char *message);
++
++        #ifdef __ANDROID__
++        // Called by the app once Android's document picker returns. The paths are local
++        // copies of the documents the user picked; an empty list means they cancelled.
++        void complete_android_document_picker(bool success, const std::list<std::filesystem::path>& paths);
++        #endif
+     
+         // Apple specific methods that usually require Objective-C. Implemented in support_apple.mm.
+         #ifdef __APPLE__

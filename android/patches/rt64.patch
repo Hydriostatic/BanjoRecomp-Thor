@@ -1,0 +1,261 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 79dfc38..dbb6eb8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -57,6 +57,13 @@ elseif (APPLE)
+         set (DXC "DYLD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/src/contrib/dxc/lib/arm64:${ZLIB_PATH}" "${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/arm64/dxc-macos")
+         set (SPIRVCROSS "DYLD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/src/contrib/spirv-cross/lib/arm64:$ENV{DYLD_LIBRARY_PATH}" "${PROJECT_SOURCE_DIR}/src/contrib/spirv-cross/bin/arm64/spirv-cross")
+     endif()
++elseif (CMAKE_SYSTEM_NAME STREQUAL "Android")
++    # Shaders are compiled on the build machine, so pick DXC for the host, not for the phone.
++    if (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
++        set (DXC "LD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/src/contrib/dxc/lib/x64" "${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/x64/dxc-linux")
++    else()
++        set (DXC "LD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/src/contrib/dxc/lib/arm64" "${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/arm64/dxc-linux")
++    endif()
+ else()
+     if (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+         set (DXC "LD_LIBRARY_PATH=${PROJECT_SOURCE_DIR}/src/contrib/dxc/lib/x64" "${PROJECT_SOURCE_DIR}/src/contrib/dxc/bin/x64/dxc-linux")
+@@ -69,12 +76,28 @@ set(ZSTD_LEGACY_SUPPORT OFF)
+ set(ZSTD_BUILD_STATIC ON)
+ set(ZSTD_BUILD_SHARED OFF)
+ 
+-add_subdirectory(src/tools/file_to_c)
++if (CMAKE_CROSSCOMPILING)
++    # file_to_c runs during the build, so it has to be a program for the build machine.
++    # Cross builds (Android) pass one in through RT64_HOST_FILE_TO_C.
++    if (NOT RT64_HOST_FILE_TO_C)
++        message(FATAL_ERROR "Cross-compiling RT64 needs RT64_HOST_FILE_TO_C set to a file_to_c built for the host.")
++    endif()
++    add_executable(file_to_c IMPORTED GLOBAL)
++    set_target_properties(file_to_c PROPERTIES IMPORTED_LOCATION "${RT64_HOST_FILE_TO_C}")
++else()
++    add_subdirectory(src/tools/file_to_c)
++endif()
+ add_subdirectory(src/contrib/re-spirv)
+-add_subdirectory(src/contrib/nativefiledialog-extended)
++if (CMAKE_SYSTEM_NAME STREQUAL "Android")
++    # No desktop file dialogs on Android; the app uses the system document picker instead.
++    add_library(nfd STATIC "${PROJECT_SOURCE_DIR}/src/contrib/nfd_android/nfd_android.cpp")
++    target_include_directories(nfd PUBLIC "${PROJECT_SOURCE_DIR}/src/contrib/nativefiledialog-extended/src/include")
++else()
++    add_subdirectory(src/contrib/nativefiledialog-extended)
++endif()
+ add_subdirectory(src/contrib/zstd/build/cmake)
+ 
+-if (CMAKE_SYSTEM_NAME MATCHES "Linux" AND RT64_SDL_WINDOW_VULKAN)
++if (CMAKE_SYSTEM_NAME MATCHES "Linux|Android" AND RT64_SDL_WINDOW_VULKAN)
+     set(PLUME_SDL_VULKAN_ENABLED TRUE)
+ elseif (APPLE)
+     set(PLUME_APPLE_RETINA_ENABLED OFF)
+@@ -301,7 +324,7 @@ add_compile_definitions(
+     IMGUI_IMPL_VULKAN_NO_PROTOTYPES
+ )
+ 
+-if (CMAKE_SYSTEM_NAME MATCHES "Linux" AND RT64_SDL_WINDOW_VULKAN)
++if (CMAKE_SYSTEM_NAME MATCHES "Linux|Android" AND RT64_SDL_WINDOW_VULKAN)
+     add_compile_definitions("PLUME_SDL_VULKAN_ENABLED")
+     add_compile_definitions("RT64_SDL_WINDOW_VULKAN")
+ endif()
+@@ -445,9 +468,11 @@ target_link_libraries(rt64 nfd)
+ target_link_libraries(rt64 libzstd_static)
+ target_link_libraries(rt64 plume)
+ 
+-# Add tools.
+-add_subdirectory(src/tools/texture_hasher)
+-add_subdirectory(src/tools/texture_packer)
++# Add tools. They're desktop command line programs, so they're left out of cross builds.
++if (NOT CMAKE_CROSSCOMPILING)
++    add_subdirectory(src/tools/texture_hasher)
++    add_subdirectory(src/tools/texture_packer)
++endif()
+ 
+ # Add any Apple-specific source files and libraries
+ if (APPLE)
+diff --git a/src/common/rt64_common.h b/src/common/rt64_common.h
+index f79adbf..558427a 100644
+--- a/src/common/rt64_common.h
++++ b/src/common/rt64_common.h
+@@ -19,6 +19,14 @@
+ #   define CPPDLLEXPORT __attribute__((visibility("default")))
+ #endif
+ 
++// Format used for the swap chain and the pipelines that draw into it. Android's swap chains
++// generally only offer RGBA, so it uses that instead of the BGRA used everywhere else.
++#if defined(__ANDROID__)
++#   define RenderSwapChainFormat RenderFormat::R8G8B8A8_UNORM
++#else
++#   define RenderSwapChainFormat RenderFormat::B8G8R8A8_UNORM
++#endif
++
+ namespace RT64 {
+     enum class UpscaleMode {
+         Bilinear,
+diff --git a/src/common/rt64_user_configuration.cpp b/src/common/rt64_user_configuration.cpp
+index cc35442..5a948c9 100644
+--- a/src/common/rt64_user_configuration.cpp
++++ b/src/common/rt64_user_configuration.cpp
+@@ -81,7 +81,12 @@ namespace RT64 {
+         refreshRateTarget = 60;
+         internalColorFormat = InternalColorFormat::Automatic;
+         hardwareResolve = HardwareResolve::Automatic;
++#   if defined(__ANDROID__)
++        // Handheld vendors already manage clocks; skip the desktop keep-alive work by default.
++        idleWorkActive = false;
++#   else
+         idleWorkActive = true;
++#   endif
+         developerMode = false;
+     }
+ 
+diff --git a/src/contrib/nfd_android/nfd_android.cpp b/src/contrib/nfd_android/nfd_android.cpp
+new file mode 100644
+index 0000000..786111b
+--- /dev/null
++++ b/src/contrib/nfd_android/nfd_android.cpp
+@@ -0,0 +1,55 @@
++// Android has no desktop file dialogs. The app shows Android's own document picker
++// instead (see the RecompFrontend changes), so every dialog call here simply reports
++// that the user cancelled. This keeps the rest of the code unchanged.
++
++#include "nfd.h"
++
++#include <cstdlib>
++
++namespace {
++    const char *lastError = nullptr;
++
++    nfdresult_t unavailable() {
++        lastError = "File dialogs are not available on Android.";
++        return NFD_CANCEL;
++    }
++}
++
++extern "C" {
++
++void NFD_FreePathN(nfdnchar_t *filePath) { std::free(filePath); }
++void NFD_FreePathU8(nfdu8char_t *filePath) { std::free(filePath); }
++nfdresult_t NFD_Init(void) { return NFD_OKAY; }
++void NFD_Quit(void) {}
++
++nfdresult_t NFD_OpenDialogN(nfdnchar_t **, const nfdnfilteritem_t *, nfdfiltersize_t, const nfdnchar_t *) { return unavailable(); }
++nfdresult_t NFD_OpenDialogU8(nfdu8char_t **, const nfdu8filteritem_t *, nfdfiltersize_t, const nfdu8char_t *) { return unavailable(); }
++nfdresult_t NFD_OpenDialogMultipleN(const nfdpathset_t **, const nfdnfilteritem_t *, nfdfiltersize_t, const nfdnchar_t *) { return unavailable(); }
++nfdresult_t NFD_OpenDialogMultipleU8(const nfdpathset_t **, const nfdu8filteritem_t *, nfdfiltersize_t, const nfdu8char_t *) { return unavailable(); }
++nfdresult_t NFD_SaveDialogN(nfdnchar_t **, const nfdnfilteritem_t *, nfdfiltersize_t, const nfdnchar_t *, const nfdnchar_t *) { return unavailable(); }
++nfdresult_t NFD_SaveDialogU8(nfdu8char_t **, const nfdu8filteritem_t *, nfdfiltersize_t, const nfdu8char_t *, const nfdu8char_t *) { return unavailable(); }
++nfdresult_t NFD_PickFolderN(nfdnchar_t **, const nfdnchar_t *) { return unavailable(); }
++nfdresult_t NFD_PickFolderU8(nfdu8char_t **, const nfdu8char_t *) { return unavailable(); }
++
++const char *NFD_GetError(void) { return lastError; }
++void NFD_ClearError(void) { lastError = nullptr; }
++
++nfdresult_t NFD_PathSet_GetCount(const nfdpathset_t *, nfdpathsetsize_t *count) {
++    if (count != nullptr) {
++        *count = 0;
++    }
++
++    return NFD_OKAY;
++}
++
++nfdresult_t NFD_PathSet_GetPathN(const nfdpathset_t *, nfdpathsetsize_t, nfdnchar_t **) { return NFD_ERROR; }
++nfdresult_t NFD_PathSet_GetPathU8(const nfdpathset_t *, nfdpathsetsize_t, nfdu8char_t **) { return NFD_ERROR; }
++void NFD_PathSet_FreePathN(const nfdnchar_t *) {}
++void NFD_PathSet_FreePathU8(const nfdu8char_t *) {}
++nfdresult_t NFD_PathSet_GetEnum(const nfdpathset_t *, nfdpathsetenum_t *) { return NFD_ERROR; }
++void NFD_PathSet_FreeEnum(nfdpathsetenum_t *) {}
++nfdresult_t NFD_PathSet_EnumNextN(nfdpathsetenum_t *, nfdnchar_t **outPath) { if (outPath != nullptr) { *outPath = nullptr; } return NFD_OKAY; }
++nfdresult_t NFD_PathSet_EnumNextU8(nfdpathsetenum_t *, nfdu8char_t **outPath) { if (outPath != nullptr) { *outPath = nullptr; } return NFD_OKAY; }
++void NFD_PathSet_Free(const nfdpathset_t *) {}
++
++}
+diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
+index 785de27..6c32e87 100644
+--- a/src/hle/rt64_application.cpp
++++ b/src/hle/rt64_application.cpp
+@@ -8,6 +8,7 @@
+ #include <cinttypes>
+ #include <filesystem>
+ 
++#include "common/rt64_common.h"
+ #include "common/rt64_dynamic_libraries.h"
+ #include "common/rt64_elapsed_timer.h"
+ #include "common/rt64_math.h"
+@@ -316,7 +317,7 @@ namespace RT64 {
+         // Create the swap chain with the texture count specified from the configuration.
+         RenderSwapChainDesc swapChainDesc;
+         swapChainDesc.renderWindow = appWindow->windowHandle;
+-        swapChainDesc.format = RenderFormat::B8G8R8A8_UNORM;
++        swapChainDesc.format = RenderSwapChainFormat;
+         swapChainDesc.textureCount = (userConfig.displayBuffering == UserConfiguration::DisplayBuffering::Triple) ? 3 : 2;
+ 
+         // Enable present wait if supported by the device. We specify a max latency of 1 as we use it to wait right before the next
+diff --git a/src/hle/rt64_application_window.cpp b/src/hle/rt64_application_window.cpp
+index 08f83e5..6230bce 100755
+--- a/src/hle/rt64_application_window.cpp
++++ b/src/hle/rt64_application_window.cpp
+@@ -103,9 +103,7 @@ namespace RT64 {
+         bounds.top = rect.top;
+         bounds.width = rect.right - rect.left;
+         bounds.height = rect.bottom - rect.top;
+-#   elif defined(__ANDROID__)
+-        static_assert(false && "Android unimplemented");
+-#   elif defined(__linux__) || defined(__APPLE__)
++#   elif defined(__linux__) || defined(__APPLE__) || defined(__ANDROID__)
+         if (SDL_VideoInit(nullptr) != 0) {
+             printf("Failed to init SDL2 video: %s\n", SDL_GetError());
+             assert(false && "Failed to init SDL2 video");
+diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
+index 3227ab1..d19f1b2 100644
+--- a/src/hle/rt64_present_queue.cpp
++++ b/src/hle/rt64_present_queue.cpp
+@@ -256,14 +256,10 @@ namespace RT64 {
+             }
+         }
+ 
+-        // Create the framebuffers if necessary.
+-        if (swapChainFramebuffers.empty()) {
+-            uint32_t textureCount = ext.swapChain->getTextureCount();
+-            swapChainFramebuffers.resize(textureCount);
+-            for (uint32_t i = 0; i < textureCount; i++) {
+-                const RenderTexture *swapChainTexture = ext.swapChain->getTexture(i);
+-                swapChainFramebuffers[i] = ext.device->createFramebuffer(RenderFramebufferDesc(&swapChainTexture, 1));
+-            }
++        // Create the framebuffers if necessary. They're created on demand per swap chain texture, since
++        // the texture count can change when the swap chain gets rebuilt (e.g. a new Android surface).
++        if (swapChainFramebuffers.size() < ext.swapChain->getTextureCount()) {
++            swapChainFramebuffers.resize(ext.swapChain->getTextureCount());
+         }
+         
+         for (int32_t i = 0; i < framesToPresent; i++) {
+@@ -303,6 +299,17 @@ namespace RT64 {
+                 swapChainValid = ext.swapChain->acquireTexture(acquiredSemaphore.get(), &swapChainIndex);
+             }
+ 
++            if (presentFrame && swapChainValid) {
++                if (swapChainIndex >= swapChainFramebuffers.size()) {
++                    swapChainFramebuffers.resize(swapChainIndex + 1);
++                }
++
++                if (swapChainFramebuffers[swapChainIndex] == nullptr) {
++                    const RenderTexture *swapChainTexture = ext.swapChain->getTexture(swapChainIndex);
++                    swapChainFramebuffers[swapChainIndex] = ext.device->createFramebuffer(RenderFramebufferDesc(&swapChainTexture, 1));
++                }
++            }
++
+             if (presentFrame && swapChainValid) {
+                 // Draw the framebuffer with the VI renderer.
+                 RenderTexture *swapChainTexture = ext.swapChain->getTexture(swapChainIndex);
+diff --git a/src/render/rt64_shader_library.cpp b/src/render/rt64_shader_library.cpp
+index d1c5273..6507957 100644
+--- a/src/render/rt64_shader_library.cpp
++++ b/src/render/rt64_shader_library.cpp
+@@ -599,7 +599,7 @@ namespace RT64 {
+             RenderGraphicsPipelineDesc pipelineDesc;
+             pipelineDesc.vertexShader = fullScreenVertexShader.get();
+             pipelineDesc.pixelShader = regularShader.get();
+-            pipelineDesc.renderTargetFormat[0] = RenderFormat::B8G8R8A8_UNORM; // TODO: Use whatever format the swap chain was created with.
++            pipelineDesc.renderTargetFormat[0] = RenderSwapChainFormat; // TODO: Use whatever format the swap chain was created with.
+             pipelineDesc.renderTargetBlend[0] = RenderBlendDesc::Copy();
+             pipelineDesc.renderTargetCount = 1;
+             pipelineDesc.pipelineLayout = videoInterfaceNearest.pipelineLayout.get();
