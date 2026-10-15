@@ -1,0 +1,34 @@
+# RecompModTool config for the RetroAchievements mod. Build with ./build.sh.
+
+[manifest]
+id = "bk_retroachievements"
+version = "0.1.0"
+display_name = "RetroAchievements"
+short_description = "Earn RetroAchievements while you play."
+description = """
+Connects Banjo: Recompiled to RetroAchievements.org. Enter your RetroAchievements username and password below, then start the game.
+
+After the first successful login a login token is saved, so you can clear the password field.
+
+Hardcore mode: this mod is not an approved RetroAchievements client yet, so RetroAchievements does not accept hardcore unlocks from it. Leave it off to earn softcore achievements."""
+authors = [ "Hydriostatic" ]
+game_id = "bk"
+minimum_recomp_version = "1.0.0"
+dependencies = []
+
+native_libraries = [
+    { name = "bk_retroachievements", funcs = [ "ra_init", "ra_frame", "ra_toast_tick" ] }
+]
+
+config_options = [
+    { id = "username", name = "Username", description = "Your RetroAchievements username.", type = "String", default = "" },
+    { id = "password", name = "Password", description = "Your RetroAchievements password. Only needed for the first login; it can be cleared afterwards.", type = "String", default = "" },
+    { id = "hardcore", name = "Hardcore mode", description = "Not accepted by RetroAchievements until this mod is an approved client.", type = "Bool", default = false },
+    { id = "notifications", name = "On-screen notifications", description = "Show login, unlock and leaderboard messages on screen.", type = "Bool", default = true },
+]
+
+[inputs]
+elf_path = "build/mod.elf"
+mod_filename = "bk_retroachievements"
+func_reference_syms_file = "../../BanjoRecompSyms/bk.us.rev0.syms.toml"
+data_reference_syms_files = [ "../../BanjoRecompSyms/bk.us.rev0.datasyms.toml" ]

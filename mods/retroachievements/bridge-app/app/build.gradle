@@ -1,0 +1,49 @@
+// RA Bridge: a small companion app that gives the RetroAchievements mod a way online.
+// See ../README.md (one folder up from bridge-app) for why it exists.
+
+plugins {
+    id 'com.android.application'
+}
+
+// Signed with the same debug key as the port, so updates install over each other.
+final String keystorePath = System.getenv('BANJO_KEYSTORE') ?: "${rootProject.projectDir}/../../../android/debug.keystore"
+final String keystorePassword = System.getenv('BANJO_KEYSTORE_PASSWORD') ?: 'android'
+final String keyAliasName = System.getenv('BANJO_KEY_ALIAS') ?: 'androiddebugkey'
+final String keyPasswordValue = System.getenv('BANJO_KEY_PASSWORD') ?: keystorePassword
+
+android {
+    namespace 'io.github.hydriostatic.rabridge'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'io.github.hydriostatic.rabridge'
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    signingConfigs {
+        shared {
+            storeFile file(keystorePath)
+            storePassword keystorePassword
+            keyAlias keyAliasName
+            keyPassword keyPasswordValue
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.shared
+        }
+        debug {
+            signingConfig signingConfigs.shared
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

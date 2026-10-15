@@ -1,0 +1,82 @@
+name: retroachievements-mod
+
+# Builds the RetroAchievements mod (bk_retroachievements.zip) and the RA Bridge companion app.
+# No ROM needed. Download both from the run's artifacts.
+
+on:
+  push:
+    paths:
+      - 'mods/retroachievements/**'
+      - '.github/workflows/retroachievements-mod.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: retroachievements-mod-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build mod and RA Bridge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      NDK_VERSION: '28.2.13676358'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Only what the mod needs: the symbol files and N64Recomp (for RecompModTool and recomp.h).
+      - name: Fetch submodules
+        run: |
+          git submodule update --init --depth 1 BanjoRecompSyms lib/N64ModernRuntime
+          git -C lib/N64ModernRuntime submodule update --init --depth 1 N64Recomp
+          git -C lib/N64ModernRuntime/N64Recomp submodule update --init --recursive --depth 1
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang lld llvm zip
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Install Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Build
+        env:
+          BUILD_BRIDGE: '1'
+        run: bash mods/retroachievements/build.sh
+
+      - name: Check the mod package
+        run: |
+          cd mods/retroachievements/out
+          unzip -l bk_retroachievements.zip
+          unzip -o -q bk_retroachievements.zip -d check
+          file check/bk_retroachievements.so | tee /dev/stderr | grep -q 'ARM aarch64'
+          llvm-nm -D --defined-only check/bk_retroachievements.so | tee exports.txt
+          for symbol in recomp_api_version ra_init ra_frame ra_toast_tick; do
+            grep -q " $symbol\$" exports.txt || { echo "missing export $symbol" >&2; exit 1; }
+          done
+
+      - name: Upload the mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: bk_retroachievements-mod
+          path: mods/retroachievements/out/bk_retroachievements.zip
+
+      - name: Upload RA Bridge
+        uses: actions/upload-artifact@v4
+        with:
+          name: RABridge-apk
+          path: mods/retroachievements/out/RABridge.apk

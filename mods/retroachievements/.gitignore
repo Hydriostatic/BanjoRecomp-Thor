@@ -1,0 +1,6 @@
+build/
+out/
+.work/
+bridge-app/.gradle/
+bridge-app/app/build/
+bridge-app/local.properties

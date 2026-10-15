@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A trophy on a dark rounded square. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FF14141C"
+        android:pathData="M24,8h60a16,16 0,0 1,16 16v60a16,16 0,0 1,-16 16h-60a16,16 0,0 1,-16 -16v-60a16,16 0,0 1,16 -16z" />
+    <path
+        android:fillColor="#FFE8B840"
+        android:pathData="M36,26h36v6h10v8c0,8 -6,14 -13,15c-2,6 -7,10 -12,11v8h10v8h-26v-8h10v-8c-5,-1 -10,-5 -12,-11c-7,-1 -13,-7 -13,-15v-8h10zM32,38v2c0,4 2,7 5,8c-1,-3 -1,-6 -1,-10zM76,38h-4c0,4 0,7 -1,10c3,-1 5,-4 5,-8z" />
+</vector>
